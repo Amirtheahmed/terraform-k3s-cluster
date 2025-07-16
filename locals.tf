@@ -210,4 +210,7 @@ EOT
     allow container_t container_var_run_t:dir { add_name remove_name write };
     allow container_t container_var_run_t:file { create open read rename unlink write };
   EOT
+
+  # Find all user-provided manifest templates.
+  user_kustomization_templates = fileset(var.extra_kustomize_folder, "**/*.yaml.tpl")
 }

@@ -1,7 +1,7 @@
 # outputs.tf
 
 data "remote_file" "kubeconfig" {
-  depends_on = [null_resource.kustomization]
+  depends_on = [null_resource.kustomization_user_deploy]
 
   conn {
     host        = var.server_ip

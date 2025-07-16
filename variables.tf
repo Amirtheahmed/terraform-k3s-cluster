@@ -174,3 +174,22 @@ variable "external_dns_values" {
   type        = string
   default     = ""
 }
+
+# --- Extra Manifests Configuration ---
+variable "extra_kustomize_folder" {
+  description = "Folder from where to upload extra manifests and templates."
+  type        = string
+  default     = "extra-manifests"
+}
+
+variable "extra_kustomize_parameters" {
+  description = "A map of values to pass to the user-provided templates."
+  type        = any
+  default     = {}
+}
+
+variable "extra_kustomize_deployment_commands" {
+  description = "Shell commands to execute after applying the user-provided kustomization."
+  type        = string
+  default     = ""
+}

@@ -28,6 +28,18 @@ module "k3s_bare_metal" {
   external_dns_provider      = "cloudflare"
   external_dns_domain_filter = "your-domain.com" # <-- IMPORTANT: Set your domain.
 
+  # --- Extra Manifests & Commands (Optional) ---
+  # extra_kustomize_folder = "my-manifests" # Default is "extra-manifests"
+  # extra_kustomize_parameters = {
+  #   app_namespace = "production"
+  #   app_version   = "1.2.3"
+  # }
+  # extra_kustomize_deployment_commands = <<-EOT
+  #   echo "Waiting for ArgoCD CRDs to be established..."
+  #   kubectl wait --for condition=established --timeout=120s crd/applications.argoproj.io
+  #   echo "ArgoCD is ready!"
+  # EOT
+
   # --- Private Registry (Optional) ---
   /*
   k3s_registries = <<-EOT

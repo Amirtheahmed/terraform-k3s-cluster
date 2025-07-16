@@ -1,4 +1,4 @@
-# Terraform k3s on Bare Metal / Root Server with openSUSE MicroOS
+# Terraform k3s on Bare Metal
 
 A lightweight, provider-agnostic Terraform module to deploy a single-node k3s cluster on any bare-metal server or VM running **openSUSE MicroOS**.
 
@@ -16,6 +16,7 @@ This project is a stripped-down version of the excellent [kube-hetzner](https://
   - **Cert-Manager**: For automated TLS certificate management.
   - **ExternalDNS** (Optional): For automated DNS record management.
 - **Choice of CNI**: Supports both lightweight `Flannel` (default) and feature-rich `Cilium`.
+- **Extensible**: Easily add your own manifests and Helm charts using Kustomize.
 
 ## Prerequisites
 
@@ -63,24 +64,56 @@ This project is a stripped-down version of the excellent [kube-hetzner](https://
     kubectl get nodes
     ```
 
+## Adding Extras (Custom Manifests)
+
+You can easily deploy your own applications, Helm charts, and other Kubernetes manifests by creating a folder (default: `extra-manifests`) next to your `kube.tf` file.
+
+1.  **Create the folder**:
+    ```sh
+    mkdir extra-manifests
+    ```
+
+2.  **Add your manifests**: Place any number of `.yaml` or `.yaml.tpl` files in this folder. The module will automatically upload and apply them. Files ending in `.tpl` will be rendered as Terraform templates.
+
+3.  **Create a `kustomization.yaml.tpl`**: This file is required at the root of your `extra-manifests` folder to tie everything together.
+
+    **Example `extra-manifests/kustomization.yaml.tpl`**:
+    ```yaml
+    apiVersion: kustomize.config.k8s.io/v1beta1
+    kind: Kustomization
+    resources:
+      - argocd.yaml
+      - my-app-namespace.yaml
+    ```
+
+4.  **(Optional) Pass Parameters**: You can pass variables to your templates using the `extra_kustomize_parameters` variable in your `kube.tf`.
+
+    **Example `extra-manifests/my-app.yaml.tpl`**:
+    ```yaml
+    apiVersion: v1
+    kind: Namespace
+    metadata:
+      name: ${app_namespace}
+    ```
+    **In `kube.tf`**:
+    ```terraform
+    module "k3s_bare_metal" {
+      # ...
+      extra_kustomize_parameters = {
+        app_namespace = "production"
+      }
+    }
+    ```
+
+5.  **(Optional) Run Post-Deploy Commands**: For complex applications like ArgoCD that require waiting for CRDs, use the `extra_kustomize_deployment_commands` variable.
+
+    **In `kube.tf`**:
+    ```terraform
+    module "k3s_bare_metal" {
+      # ...
+      extra_kustomize_deployment_commands = "kubectl wait --for condition=established --timeout=120s crd/applications.argoproj.io"
+    }
+    ```
+
 ## Module Variables
-
-| Name | Description | Type | Default |
-|------|-------------|------|---------|
-| `server_ip` | **Required.** The public IP address of the server. | `string` | - |
-| `ssh_private_key` | **Required.** The content of the SSH private key. | `string` | - |
-| `ssh_user` | The user for SSH connections. | `string` | `"root"` |
-| `ssh_port` | The port for SSH connections. | `number` | `22` |
-| `node_name` | The name for the Kubernetes node. | `string` | `"bare-metal-k3s"` |
-| `cni_plugin` | CNI to use: `flannel` or `cilium`. | `string` | `"flannel"` |
-| `enable_cert_manager` | If true, installs Cert-Manager. | `bool` | `true` |
-| `enable_external_dns` | If true, installs ExternalDNS. | `bool` | `false` |
-| `external_dns_provider` | DNS provider for ExternalDNS (e.g., `cloudflare`). | `string` | `"cloudflare"` |
-| `external_dns_domain_filter` | Domain to manage with ExternalDNS. | `string` | `""` |
-| ... | *(See `variables.tf` for a full list)* | ... | ... |
-
-## Notes
-
-- **ExternalDNS Secret**: If you enable ExternalDNS, you must create a Kubernetes secret containing the API token for your DNS provider. The module does not handle this for security reasons.
-- **Idempotency**: The setup scripts are designed to be as idempotent as possible. Re-running `terraform apply` should bring the server to the desired state without errors.
-- **OS Updates**: MicroOS performs transactional updates automatically. Kured ensures that the node is safely drained and rebooted when required.
+*(See `variables.tf` for a full list)*
