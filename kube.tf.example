@@ -1,0 +1,72 @@
+# kube.tf.example
+
+# --- Provider Configuration ---
+# This module is provider-agnostic and uses the null provider for remote execution.
+# Ensure your Terraform environment is set up.
+
+# --- Module Usage ---
+module "k3s_bare_metal" {
+  # Replace with the path to the directory containing the module files.
+  source = "./"
+
+  # --- Server & SSH Configuration ---
+  server_ip       = "203.0.113.10" # <-- IMPORTANT: Set your server's public IP here.
+  ssh_user        = "root"
+  ssh_private_key = file("~/.ssh/id_ed25519") # <-- IMPORTANT: Set the path to your private key.
+  node_name       = "netcup-rs4000"
+
+  # --- k3s Configuration ---
+  # To use a specific version, uncomment the line below.
+  # install_k3s_version = "v1.29.4+k3s1"
+
+  # --- CNI Configuration ---
+  # cni_plugin = "cilium" # Uncomment to use Cilium instead of the default Flannel.
+
+  # --- Addon Configuration ---
+  enable_cert_manager = true
+  enable_external_dns = true
+  external_dns_provider      = "cloudflare"
+  external_dns_domain_filter = "your-domain.com" # <-- IMPORTANT: Set your domain.
+
+  # --- Private Registry (Optional) ---
+  /*
+  k3s_registries = <<-EOT
+    mirrors:
+      "docker.io":
+        endpoint:
+          - "http://your-registry-mirror:5000"
+  EOT
+  */
+}
+
+# --- Secret for ExternalDNS ---
+# This secret must be created manually in the cluster after setup,
+# or you can use the Kubernetes Terraform provider.
+#
+# Example for Cloudflare:
+#
+# resource "kubernetes_secret" "external_dns" {
+#   metadata {
+#     name      = "external-dns-secrets"
+#     namespace = "external-dns"
+#   }
+#   data = {
+#     api_token = "YOUR_CLOUDFLARE_API_TOKEN"
+#   }
+#   depends_on = [
+#     module.k3s_bare_metal
+#   ]
+# }
+
+# --- Outputs ---
+output "kubeconfig" {
+  value       = module.k3s_bare_metal.kubeconfig
+  description = "Kubeconfig to access the cluster."
+  sensitive   = true
+}
+
+output "k3s_token" {
+  value       = module.k3s_bare_metal.k3s_token
+  description = "Token for joining other nodes (if ever needed)."
+  sensitive   = true
+}
