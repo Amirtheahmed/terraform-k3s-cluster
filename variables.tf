@@ -99,7 +99,7 @@ variable "cni_plugin" {
 variable "cilium_version" {
   description = "Version of the Cilium Helm chart to install."
   type        = string
-  default     = "1.15.1"
+  default     = "1.17.6"
 }
 
 variable "cilium_values" {
@@ -112,13 +112,13 @@ variable "cilium_values" {
 variable "sys_upgrade_controller_version" {
   description = "Version of the System Upgrade Controller."
   type        = string
-  default     = "v0.14.0"
+  default     = "v0.16.0"
 }
 
 variable "kured_version" {
   description = "Version of Kured to install."
   type        = string
-  default     = "1.14.2"
+  default     = "1.17.1"
 }
 
 variable "kured_options" {
@@ -136,11 +136,11 @@ variable "enable_cert_manager" {
 variable "cert_manager_version" {
   description = "Version of the Cert-Manager Helm chart."
   type        = string
-  default     = "v1.14.4"
+  default     = "v1.18.2"
 }
 
 variable "cert_manager_values" {
-  description = "Custom values.yaml content for the Cert-Manager Helm chart."
+  description = "Custom values.yaml content for the Cert-Manager Helm chart. Overrides the default values."
   type        = string
   default     = ""
 }

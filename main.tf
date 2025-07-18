@@ -135,7 +135,7 @@ resource "null_resource" "kustomization" {
     # Re-run if addon values change.
     helm_values_yaml = join("---\n", [
       local.cilium_values,
-      local.cert_manager_values,
+      #local.cert_manager_values,
       local.external_dns_values,
     ])
   }
@@ -169,28 +169,29 @@ resource "null_resource" "kustomization" {
     destination = "/var/post_install/kured.yaml"
   }
 
-  # FIX: Removed 'count' and made 'content' conditional.
+  # FIX: Apply indent() to ensure correct YAML formatting.
   provisioner "file" {
     content = var.cni_plugin == "cilium" ? templatefile("${path.module}/templates/cilium.yaml.tpl", {
-      values = local.cilium_values, version = var.cilium_version
+      values  = indent(4, local.cilium_values)
+      version = var.cilium_version
     }) : ""
     destination = "/var/post_install/cilium.yaml"
   }
 
-  # FIX: Removed 'count' and made 'content' conditional.
+  # FIX: Use the new local and apply indent().
   provisioner "file" {
     content = var.enable_cert_manager ? templatefile("${path.module}/templates/cert_manager.yaml.tpl", {
-      version = var.cert_manager_version,
-      values  = var.cert_manager_values != "" ? var.cert_manager_values : yamlencode(local.cert_manager_values_map),
+      version   = var.cert_manager_version,
+      values    = indent(4, local.cert_manager_values)
       bootstrap = false
     }) : ""
     destination = "/var/post_install/cert_manager.yaml"
   }
 
-  # FIX: Removed 'count' and made 'content' conditional.
+  # FIX: Apply indent() to ensure correct YAML formatting.
   provisioner "file" {
     content = var.enable_external_dns ? templatefile("${path.module}/templates/external_dns.yaml.tpl", {
-      values = local.external_dns_values
+      values = indent(4, local.external_dns_values)
     }) : ""
     destination = "/var/post_install/external_dns.yaml"
   }
@@ -215,7 +216,7 @@ resource "null_resource" "kustomization" {
       echo 'Waiting for the system-upgrade-controller deployment to become available...'
       kubectl -n system-upgrade wait --for=condition=available --timeout=360s deployment/system-upgrade-controller
       sleep 5
-      kubectl apply -f https://github.com/rancher/system-upgrade-controller/releases/download/${var.sys_upgrade_controller_version}/plans.yaml
+      #kubectl apply -f https://github.com/rancher/system-upgrade-controller/releases/download/${var.sys_upgrade_controller_version}/plans.yaml
       EOT
     ]
   }
@@ -249,9 +250,6 @@ resource "null_resource" "kustomization_user" {
     destination = "/var/user_kustomize/${trimsuffix(each.key, ".tpl")}"
   }
 }
-
-# This resource uploads user-provided manifests and templates.
-# main.tf
 
 # This resource applies the user-provided kustomization and runs extra commands.
 resource "null_resource" "kustomization_user_deploy" {

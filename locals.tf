@@ -68,7 +68,7 @@ locals {
         "https://github.com/rancher/system-upgrade-controller/releases/download/${var.sys_upgrade_controller_version}/crd.yaml"
       ],
       var.cni_plugin == "cilium" ? ["cilium.yaml"] : [],
-      var.enable_cert_manager ? ["cert_manager.yaml"] : [],
+      var.enable_cert_manager ? ["https://github.com/cert-manager/cert-manager/releases/download/${var.cert_manager_version}/cert-manager.yaml"] : [],
       var.enable_external_dns ? ["external_dns.yaml"] : [],
     ),
     patches = [
@@ -109,16 +109,14 @@ hubble:
 EOT
 
   # Default values for Cert-Manager Helm chart.
-  cert_manager_values_map = {
-    installCRDs  = true
-    replicaCount = 1
-    webhook = {
-      replicaCount = 1
-    }
-    cainjector = {
-      replicaCount = 1
-    }
-  }
+  cert_manager_values = var.cert_manager_values != "" ? var.cert_manager_values : <<EOT
+installCRDs: true
+replicaCount: 1
+webhook:
+  replicaCount: 1
+cainjector:
+  replicaCount: 1
+EOT
 
   # Default values for ExternalDNS Helm chart.
   external_dns_values = var.external_dns_values != "" ? var.external_dns_values : <<EOT
