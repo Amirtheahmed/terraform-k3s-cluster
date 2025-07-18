@@ -180,7 +180,9 @@ resource "null_resource" "kustomization" {
   # FIX: Removed 'count' and made 'content' conditional.
   provisioner "file" {
     content = var.enable_cert_manager ? templatefile("${path.module}/templates/cert_manager.yaml.tpl", {
-      version = var.cert_manager_version, values = local.cert_manager_values, bootstrap = false
+      version = var.cert_manager_version,
+      values  = var.cert_manager_values != "" ? var.cert_manager_values : yamlencode(local.cert_manager_values_map),
+      bootstrap = false
     }) : ""
     destination = "/var/post_install/cert_manager.yaml"
   }

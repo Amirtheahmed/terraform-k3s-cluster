@@ -109,14 +109,16 @@ hubble:
 EOT
 
   # Default values for Cert-Manager Helm chart.
-  cert_manager_values = var.cert_manager_values != "" ? var.cert_manager_values : <<EOT
-installCRDs: true
-replicaCount: 1
-webhook:
-  replicaCount: 1
-cainjector:
-  replicaCount: 1
-EOT
+  cert_manager_values_map = {
+    installCRDs  = true
+    replicaCount = 1
+    webhook = {
+      replicaCount = 1
+    }
+    cainjector = {
+      replicaCount = 1
+    }
+  }
 
   # Default values for ExternalDNS Helm chart.
   external_dns_values = var.external_dns_values != "" ? var.external_dns_values : <<EOT
