@@ -45,6 +45,8 @@ issue_fix.patch
 
 # AI related files
 CLAUDE.md
+*aidigest*
+codebase.md
 
 # Misc
 .DS_Store

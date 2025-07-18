@@ -74,3 +74,4 @@ EOF
 # End of transactional-update block
 
 echo "--- OS setup staged. Rebooting to apply changes. ---"
+reboot

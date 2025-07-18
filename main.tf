@@ -84,7 +84,6 @@ resource "null_resource" "k3s_server_setup" {
   provisioner "remote-exec" {
     inline = [
       "systemctl start k3s",
-      "mkdir -p /var/post_install /var/user_kustomize",
       # Add kubectl alias and completion for convenience
       "echo 'alias k=kubectl' > /etc/profile.d/00-kubectl.sh",
       "echo 'if command -v kubectl &>/dev/null; then source <(kubectl completion bash); complete -o default -F __start_kubectl k; fi' >> /etc/profile.d/00-kubectl.sh",
@@ -126,6 +125,11 @@ resource "null_resource" "kustomization" {
     user        = var.ssh_user
     private_key = var.ssh_private_key
     port        = var.ssh_port
+  }
+
+  # Create directory for addon manifests
+  provisioner "remote-exec" {
+    inline = ["mkdir -p /var/post_install"]
   }
 
   # Upload all necessary manifest and Helm chart files.
@@ -187,33 +191,7 @@ resource "null_resource" "kustomization" {
 }
 
 # This resource uploads user-provided manifests and templates.
-resource "null_resource" "kustomization_user" {
-  depends_on = [null_resource.kustomization]
-  for_each   = local.user_kustomization_templates
-
-  triggers = {
-    manifest_sha1 = sha1(templatefile("${var.extra_kustomize_folder}/${each.key}", var.extra_kustomize_parameters))
-  }
-
-  connection {
-    type        = "ssh"
-    host        = var.server_ip
-    user        = var.ssh_user
-    private_key = var.ssh_private_key
-    port        = var.ssh_port
-  }
-
-  # Create the directory structure on the remote server.
-  provisioner "remote-exec" {
-    inline = ["mkdir -p $(dirname /var/user_kustomize/${each.key})"]
-  }
-
-  # Render the template and upload it, removing the .tpl extension.
-  provisioner "file" {
-    content     = templatefile("${var.extra_kustomize_folder}/${each.key}", var.extra_kustomize_parameters)
-    destination = "/var/user_kustomize/${trimsuffix(each.key, ".tpl")}"
-  }
-}
+# main.tf
 
 # This resource applies the user-provided kustomization and runs extra commands.
 resource "null_resource" "kustomization_user_deploy" {
@@ -236,6 +214,19 @@ resource "null_resource" "kustomization_user_deploy" {
   # Apply the user's kustomization and run any post-deployment commands.
   provisioner "remote-exec" {
     inline = compact([
+      <<-EOT
+      set -e
+      KUSTOMIZE_DIR="/var/user_kustomize"
+      if [ ! -f "$KUSTOMIZE_DIR/kustomization.yaml" ] && [ ! -f "$KUSTOMIZE_DIR/Kustomization" ]; then
+        echo "User kustomization file not found. Generating a default one."
+        {
+          echo "apiVersion: kustomize.config.k8s.io/v1beta1"
+          echo "kind: Kustomization"
+          echo "resources:"
+          find "$KUSTOMIZE_DIR" -maxdepth 1 -type f \\( -name "*.yaml" -o -name "*.yml" \\) -printf "  - %f\\n"
+        } > "$KUSTOMIZE_DIR/kustomization.yaml"
+      fi
+      EOT,
       "echo 'Applying user kustomization...'",
       "kubectl apply -k /var/user_kustomize/",
       var.extra_kustomize_deployment_commands

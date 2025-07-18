@@ -1,7 +1,7 @@
 # outputs.tf
 
-data "remote_file" "kubeconfig" {
-  depends_on = [null_resource.kustomization_user_deploy]
+data "remote_file" "remote_kubeconfig_file" {
+  depends_on = [null_resource.kustomization]
 
   conn {
     host        = var.server_ip
@@ -13,7 +13,7 @@ data "remote_file" "kubeconfig" {
 }
 
 locals {
-  kubeconfig_external = replace(replace(data.remote_file.kubeconfig.content, "127.0.0.1", var.server_ip), "default", var.node_name)
+  kubeconfig_external = replace(replace(data.remote_file.remote_kubeconfig_file.content, "127.0.0.1", var.server_ip), "default", var.node_name)
 }
 
 output "kubeconfig" {
