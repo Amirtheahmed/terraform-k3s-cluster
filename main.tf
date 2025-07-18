@@ -45,6 +45,31 @@ resource "null_resource" "os_setup" {
   }
 }
 
+resource "null_resource" "k3s_registries_upload" {
+  count = var.k3s_registries != "" ? 1 : 0
+
+  depends_on = [null_resource.os_setup]
+
+  triggers = {
+    # Re-run if the content of the registries file changes.
+    registries_content = var.k3s_registries
+  }
+
+  connection {
+    type        = "ssh"
+    host        = var.server_ip
+    user        = var.ssh_user
+    private_key = var.ssh_private_key
+    port        = var.ssh_port
+  }
+
+  # Provisioner to upload the k3s registries configuration.
+  provisioner "file" {
+    content     = var.k3s_registries
+    destination = "/tmp/registries.yaml"
+  }
+}
+
 # This resource handles the complete setup of the k3s server on the now-prepared machine.
 resource "null_resource" "k3s_server_setup" {
   depends_on = [null_resource.os_setup]
