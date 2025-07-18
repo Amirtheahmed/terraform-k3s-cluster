@@ -93,13 +93,6 @@ resource "null_resource" "k3s_server_setup" {
     destination = "/tmp/config.yaml"
   }
 
-  # Provisioner to upload the k3s registries configuration if provided.
-  provisioner "file" {
-    count       = var.k3s_registries != "" ? 1 : 0
-    content     = var.k3s_registries
-    destination = "/tmp/registries.yaml"
-  }
-
   # Provisioner to run the k3s installation script.
   provisioner "remote-exec" {
     inline = local.install_k3s_server
