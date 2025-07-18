@@ -139,54 +139,89 @@ resource "null_resource" "kustomization" {
   }
 
   provisioner "file" {
-    content     = file("${path.module}/kustomize/system-upgrade-controller.yaml")
+    content = file("${path.module}/kustomize/system-upgrade-controller.yaml")
     destination = "/var/post_install/system-upgrade-controller.yaml"
   }
 
   provisioner "file" {
-    content     = templatefile("${path.module}/templates/kured.yaml.tpl", { options = local.kured_options })
+    content = templatefile("${path.module}/templates/kured.yaml.tpl", { options = local.kured_options })
     destination = "/var/post_install/kured.yaml"
   }
 
   provisioner "file" {
     count       = var.cni_plugin == "cilium" ? 1 : 0
-    content     = templatefile("${path.module}/templates/cilium.yaml.tpl", { values = local.cilium_values, version = var.cilium_version })
+    content = templatefile("${path.module}/templates/cilium.yaml.tpl", {
+      values = local.cilium_values, version = var.cilium_version
+    })
     destination = "/var/post_install/cilium.yaml"
   }
 
   provisioner "file" {
     count       = var.enable_cert_manager ? 1 : 0
-    content     = templatefile("${path.module}/templates/cert_manager.yaml.tpl", { version = var.cert_manager_version, values = local.cert_manager_values, bootstrap = false })
+    content = templatefile("${path.module}/templates/cert_manager.yaml.tpl", {
+      version = var.cert_manager_version, values = local.cert_manager_values, bootstrap = false
+    })
     destination = "/var/post_install/cert_manager.yaml"
   }
 
   provisioner "file" {
     count       = var.enable_external_dns ? 1 : 0
-    content     = templatefile("${path.module}/templates/external_dns.yaml.tpl", { values = local.external_dns_values })
+    content = templatefile("${path.module}/templates/external_dns.yaml.tpl", { values = local.external_dns_values })
     destination = "/var/post_install/external_dns.yaml"
   }
 
   # Apply all manifests using Kustomize.
   provisioner "remote-exec" {
     inline = [
-      "set -ex",
-      # Wait for the cluster to be ready before applying addons.
       <<-EOT
-      timeout 180 bash <<EOF
+      set -ex
+      # Wait for the cluster to be ready before applying addons.
+      timeout 180 bash <<'BASH_EOF'
         until [[ "$(kubectl get --raw='/readyz' 2> /dev/null)" == "ok" ]]; do
           echo "Waiting for the cluster to become ready for addons..."
           sleep 2
         done
-      EOF
-      EOT,
+      BASH_EOF
+
       # Apply the main kustomization file.
-      "kubectl apply -k /var/post_install",
+      kubectl apply -k /var/post_install
+
       # Wait for system-upgrade-controller to be available before applying plans.
-      "echo 'Waiting for the system-upgrade-controller deployment to become available...'",
-      "kubectl -n system-upgrade wait --for=condition=available --timeout=360s deployment/system-upgrade-controller",
-      "sleep 5",
-      "kubectl apply -f https://github.com/rancher/system-upgrade-controller/releases/download/${var.sys_upgrade_controller_version}/plans.yaml"
+      echo 'Waiting for the system-upgrade-controller deployment to become available...'
+      kubectl -n system-upgrade wait --for=condition=available --timeout=360s deployment/system-upgrade-controller
+      sleep 5
+      kubectl apply -f https://github.com/rancher/system-upgrade-controller/releases/download/${var.sys_upgrade_controller_version}/plans.yaml
+      EOT
     ]
+  }
+}
+
+# This resource uploads user-provided manifests and templates.
+resource "null_resource" "kustomization_user" {
+  depends_on = [null_resource.kustomization]
+  for_each   = local.user_kustomization_templates
+
+  triggers = {
+    manifest_sha1 = sha1(templatefile("${var.extra_kustomize_folder}/${each.key}", var.extra_kustomize_parameters))
+  }
+
+  connection {
+    type        = "ssh"
+    host        = var.server_ip
+    user        = var.ssh_user
+    private_key = var.ssh_private_key
+    port        = var.ssh_port
+  }
+
+  # Create the directory structure on the remote server.
+  provisioner "remote-exec" {
+    inline = ["mkdir -p /var/user_kustomize/$(dirname ${each.key})"]
+  }
+
+  # Render the template and upload it, removing the .tpl extension.
+  provisioner "file" {
+    content     = templatefile("${var.extra_kustomize_folder}/${each.key}", var.extra_kustomize_parameters)
+    destination = "/var/user_kustomize/${trimsuffix(each.key, ".tpl")}"
   }
 }
 
@@ -213,7 +248,7 @@ resource "null_resource" "kustomization_user_deploy" {
 
   # Apply the user's kustomization and run any post-deployment commands.
   provisioner "remote-exec" {
-    inline = compact([
+    inline = [
       <<-EOT
       set -e
       KUSTOMIZE_DIR="/var/user_kustomize"
@@ -226,10 +261,12 @@ resource "null_resource" "kustomization_user_deploy" {
           find "$KUSTOMIZE_DIR" -maxdepth 1 -type f \\( -name "*.yaml" -o -name "*.yml" \\) -printf "  - %f\\n"
         } > "$KUSTOMIZE_DIR/kustomization.yaml"
       fi
-      EOT,
-      "echo 'Applying user kustomization...'",
-      "kubectl apply -k /var/user_kustomize/",
-      var.extra_kustomize_deployment_commands
-    ])
+
+      echo 'Applying user kustomization...'
+      kubectl apply -k /var/user_kustomize/
+
+      ${var.extra_kustomize_deployment_commands}
+      EOT
+    ]
   }
 }
