@@ -123,6 +123,9 @@ resource "null_resource" "k3s_server_setup" {
 }
 
 # This resource handles the deployment of Kubernetes addons like Kured, Cert-Manager, etc.
+# main.tf
+
+# This resource handles the deployment of Kubernetes addons like Kured, Cert-Manager, etc.
 resource "null_resource" "kustomization" {
   depends_on = [null_resource.k3s_server_setup]
 
@@ -157,34 +160,36 @@ resource "null_resource" "kustomization" {
   }
 
   provisioner "file" {
-    content = file("${path.module}/kustomize/system-upgrade-controller.yaml")
+    content     = file("${path.module}/kustomize/system-upgrade-controller.yaml")
     destination = "/var/post_install/system-upgrade-controller.yaml"
   }
 
   provisioner "file" {
-    content = templatefile("${path.module}/templates/kured.yaml.tpl", { options = local.kured_options })
+    content     = templatefile("${path.module}/templates/kured.yaml.tpl", { options = local.kured_options })
     destination = "/var/post_install/kured.yaml"
   }
 
+  # FIX: Removed 'count' and made 'content' conditional.
   provisioner "file" {
-    count       = var.cni_plugin == "cilium" ? 1 : 0
-    content = templatefile("${path.module}/templates/cilium.yaml.tpl", {
+    content = var.cni_plugin == "cilium" ? templatefile("${path.module}/templates/cilium.yaml.tpl", {
       values = local.cilium_values, version = var.cilium_version
-    })
+    }) : ""
     destination = "/var/post_install/cilium.yaml"
   }
 
+  # FIX: Removed 'count' and made 'content' conditional.
   provisioner "file" {
-    count       = var.enable_cert_manager ? 1 : 0
-    content = templatefile("${path.module}/templates/cert_manager.yaml.tpl", {
+    content = var.enable_cert_manager ? templatefile("${path.module}/templates/cert_manager.yaml.tpl", {
       version = var.cert_manager_version, values = local.cert_manager_values, bootstrap = false
-    })
+    }) : ""
     destination = "/var/post_install/cert_manager.yaml"
   }
 
+  # FIX: Removed 'count' and made 'content' conditional.
   provisioner "file" {
-    count       = var.enable_external_dns ? 1 : 0
-    content = templatefile("${path.module}/templates/external_dns.yaml.tpl", { values = local.external_dns_values })
+    content = var.enable_external_dns ? templatefile("${path.module}/templates/external_dns.yaml.tpl", {
+      values = local.external_dns_values
+    }) : ""
     destination = "/var/post_install/external_dns.yaml"
   }
 
