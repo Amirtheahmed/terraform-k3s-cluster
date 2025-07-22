@@ -99,13 +99,49 @@ variable "cni_plugin" {
 variable "cilium_version" {
   description = "Version of the Cilium Helm chart to install."
   type        = string
-  default     = "1.17.6"
+  default     = "1.17.0"
 }
 
 variable "cilium_values" {
   description = "Custom values.yaml content for the Cilium Helm chart."
   type        = string
   default     = ""
+}
+
+# --- Ingress Controller Configuration ---
+variable "ingress_controller" {
+  description = "The ingress controller to install. Set to 'none' to disable."
+  type        = string
+  default     = "traefik"
+  validation {
+    condition     = contains(["traefik", "none"], var.ingress_controller)
+    error_message = "Allowed values are 'traefik' or 'none'."
+  }
+}
+
+variable "traefik_version" {
+  description = "Version of the Traefik Helm chart."
+  type        = string
+  default     = ""
+}
+
+
+variable "traefik_values" {
+  description = "Custom values.yaml content for the Traefik Helm chart."
+  type        = string
+  default     = ""
+}
+
+variable "traefik_additional_trusted_ips" {
+  type        = list(string)
+  default     = []
+  description = "Additional Trusted IPs to pass to Traefik. These are the ones that go into the trustedIPs section of the Traefik helm values file."
+}
+
+variable "ingress_target_namespace" {
+  description = "The namespace to deploy the ingress controller to."
+  type        = string
+  default     = "traefik"
 }
 
 # --- Addon Configuration ---
@@ -118,7 +154,7 @@ variable "sys_upgrade_controller_version" {
 variable "kured_version" {
   description = "Version of Kured to install."
   type        = string
-  default     = "1.17.1"
+  default     = null
 }
 
 variable "kured_options" {
@@ -136,7 +172,7 @@ variable "enable_cert_manager" {
 variable "cert_manager_version" {
   description = "Version of the Cert-Manager Helm chart."
   type        = string
-  default     = "v1.18.2"
+  default     = "*"
 }
 
 variable "cert_manager_values" {
@@ -149,6 +185,64 @@ variable "enable_external_dns" {
   description = "If true, installs ExternalDNS for automated DNS record management."
   type        = bool
   default     = false
+}
+
+variable "disable_longhorn" {
+  description = "If true, installs Longhorn for persistent storage."
+  type        = bool
+  default     = false
+}
+
+variable "longhorn_values" {
+    description = "Custom values.yaml content for the Longhorn Helm chart."
+    type        = string
+    default     = ""
+}
+
+variable "longhorn_fstype" {
+  description = "The filesystem type to use for Longhorn volumes (e.g., 'ext4', 'xfs')."
+  type        = string
+  default     = "ext4"
+
+  validation {
+    condition     = contains(["ext4", "xfs"], var.longhorn_fstype)
+    error_message = "Must be one of \"ext4\" or \"xfs\""
+  }
+}
+
+variable "longhorn_repository" {
+  type        = string
+  default     = "https://charts.longhorn.io"
+  description = "By default the official chart which may be incompatible with rancher is used. If you need to fully support rancher switch to https://charts.rancher.io."
+}
+
+variable "longhorn_namespace" {
+  description = "The namespace to deploy Longhorn into."
+  type        = string
+  default     = "longhorn-system"
+}
+
+variable "longhorn_replica_count" {
+  description = "The number of replicas for Longhorn volumes."
+  type        = number
+  default     = 2
+
+    validation {
+        condition     = var.longhorn_replica_count >= 2
+        error_message = "Replica count must be at least 3 for Longhorn."
+    }
+}
+
+variable "longhorn_version" {
+  description = "Version of the Longhorn Helm chart."
+  type        = string
+  default     = "*"
+}
+
+variable "longhorn_helmchart_bootstrap" {
+    description = "If true, bootstraps Longhorn using the Helm chart."
+    type        = bool
+    default     = true
 }
 
 variable "external_dns_provider" {

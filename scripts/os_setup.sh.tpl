@@ -12,6 +12,7 @@ set -ex
 
 # 1. Install prerequisite packages
 echo "Installing packages: ${needed_packages}"
+# CORRECT: Use zypper directly inside the transactional-update shell
 zypper -n in ${needed_packages}
 
 # 2. Harden SSH configuration
@@ -71,7 +72,7 @@ fi
 %{~ endif ~}
 
 EOF
-# End of transactional-update block
+# End of transactional-update block. The shell exits and stages the changes.
 
 echo "--- OS setup staged. Rebooting to apply changes. ---"
 reboot

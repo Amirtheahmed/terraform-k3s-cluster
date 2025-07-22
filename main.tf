@@ -12,6 +12,7 @@ resource "null_resource" "os_setup" {
     server_ip       = var.server_ip
     swap_size       = var.swap_size
     disable_selinux = var.disable_selinux
+    script_sha1     = sha1(local.os_setup_script)
   }
 
   connection {
@@ -70,6 +71,70 @@ resource "null_resource" "k3s_registries_upload" {
   }
 }
 
+resource "null_resource" "network_config" {
+  depends_on = [null_resource.os_setup]
+
+  triggers = {
+    server_ip = var.server_ip
+  }
+
+  connection {
+    type        = "ssh"
+    host        = var.server_ip
+    user        = var.ssh_user
+    private_key = var.ssh_private_key
+    port        = var.ssh_port
+  }
+
+  # Create network configuration files
+  provisioner "file" {
+    content = templatefile("${path.module}/templates/flannel-conf.json.tpl", {})
+    destination = "/tmp/flannel-conf.json"
+  }
+
+  # Create custom resolv.conf for k3s
+  provisioner "file" {
+    content = <<-EOT
+      nameserver 10.43.0.10
+      nameserver 1.1.1.1
+      nameserver 8.8.8.8
+      search cluster.local svc.cluster.local
+      options ndots:5
+    EOT
+    destination = "/tmp/k3s-resolv.conf"
+  }
+
+  # Apply network fixes
+  provisioner "remote-exec" {
+    inline = [
+      "mkdir -p /etc/rancher/k3s",
+      "mv /tmp/flannel-conf.json /etc/rancher/k3s/flannel-conf.json",
+      "mv /tmp/k3s-resolv.conf /etc/rancher/k3s/resolv.conf",
+
+      # Apply sysctl settings
+      "cat > /etc/sysctl.d/99-k3s-network.conf <<EOF",
+      "net.bridge.bridge-nf-call-iptables = 1",
+      "net.bridge.bridge-nf-call-ip6tables = 1",
+      "net.ipv4.ip_forward = 1",
+      "net.ipv4.conf.all.forwarding = 1",
+      "net.ipv6.conf.all.forwarding = 1",
+      "net.core.rmem_max = 134217728",
+      "net.core.wmem_max = 134217728",
+      "net.ipv4.tcp_rmem = 4096 87380 134217728",
+      "net.ipv4.tcp_wmem = 4096 65536 134217728",
+      "net.core.netdev_max_backlog = 5000",
+      "EOF",
+      "sysctl -p /etc/sysctl.d/99-k3s-network.conf",
+
+      # Load required kernel modules
+      "modprobe br_netfilter || true",
+      "modprobe nf_conntrack || true",
+      "echo 'br_netfilter' > /etc/modules-load.d/k3s.conf",
+      "echo 'nf_conntrack' >> /etc/modules-load.d/k3s.conf"
+    ]
+  }
+}
+
 # This resource handles the complete setup of the k3s server on the now-prepared machine.
 resource "null_resource" "k3s_server_setup" {
   depends_on = [null_resource.os_setup]
@@ -123,9 +188,6 @@ resource "null_resource" "k3s_server_setup" {
 }
 
 # This resource handles the deployment of Kubernetes addons like Kured, Cert-Manager, etc.
-# main.tf
-
-# This resource handles the deployment of Kubernetes addons like Kured, Cert-Manager, etc.
 resource "null_resource" "kustomization" {
   depends_on = [null_resource.k3s_server_setup]
 
@@ -134,9 +196,25 @@ resource "null_resource" "kustomization" {
     setup_id = null_resource.k3s_server_setup.id
     # Re-run if addon values change.
     helm_values_yaml = join("---\n", [
+      local.traefik_values,
       local.cilium_values,
-      #local.cert_manager_values,
+      local.cert_manager_values,
       local.external_dns_values,
+      local.longhorn_values,
+    ])
+    # Redeploy when versions of addons need to be updated
+    versions = join("\n", [
+      coalesce(var.initial_k3s_channel, "N/A"),
+      coalesce(var.install_k3s_version, "N/A"),
+      coalesce(var.kured_version, "N/A"),
+      coalesce(var.cilium_version, "N/A"),
+      coalesce(var.traefik_version, "N/A"),
+      coalesce(var.cert_manager_version, "N/A"),
+      coalesce(var.longhorn_version, "N/A"),
+      coalesce(var.sys_upgrade_controller_version, "N/A"),
+    ])
+    options = join("\n", [
+      for option, value in local.kured_options : "${option}=${value}"
     ])
   }
 
@@ -169,7 +247,21 @@ resource "null_resource" "kustomization" {
     destination = "/var/post_install/kured.yaml"
   }
 
-  # FIX: Apply indent() to ensure correct YAML formatting.
+  # Upload the flannel RBAC fix
+  provisioner "file" {
+    content     = file("${path.module}/kustomize/flannel-rbac.yaml")
+    destination = "/var/post_install/flannel-rbac.yaml"
+  }
+
+  provisioner "file" {
+    content = var.ingress_controller == "traefik" ? templatefile("${path.module}/templates/traefik_ingress.yaml.tpl", {
+      version          = var.traefik_version
+      values           = indent(4, local.traefik_values)
+      target_namespace = var.ingress_target_namespace
+    }) : ""
+    destination = "/var/post_install/traefik_ingress.yaml"
+  }
+
   provisioner "file" {
     content = var.cni_plugin == "cilium" ? templatefile("${path.module}/templates/cilium.yaml.tpl", {
       values  = indent(4, local.cilium_values)
@@ -178,7 +270,6 @@ resource "null_resource" "kustomization" {
     destination = "/var/post_install/cilium.yaml"
   }
 
-  # FIX: Use the new local and apply indent().
   provisioner "file" {
     content = var.enable_cert_manager ? templatefile("${path.module}/templates/cert_manager.yaml.tpl", {
       version   = var.cert_manager_version,
@@ -188,7 +279,6 @@ resource "null_resource" "kustomization" {
     destination = "/var/post_install/cert_manager.yaml"
   }
 
-  # FIX: Apply indent() to ensure correct YAML formatting.
   provisioner "file" {
     content = var.enable_external_dns ? templatefile("${path.module}/templates/external_dns.yaml.tpl", {
       values = indent(4, local.external_dns_values)
@@ -196,11 +286,34 @@ resource "null_resource" "kustomization" {
     destination = "/var/post_install/external_dns.yaml"
   }
 
+  provisioner "file" {
+    content = !var.disable_longhorn ? templatefile("${path.module}/templates/longhorn.yaml.tpl", {
+      values = indent(4, local.longhorn_values)
+      longhorn_namespace  = var.longhorn_namespace
+      longhorn_repository = var.longhorn_repository
+      version             = var.longhorn_version
+      bootstrap           = var.longhorn_helmchart_bootstrap
+    }) : ""
+    destination = "/var/post_install/longhorn.yaml"
+  }
+
   # Apply all manifests using Kustomize.
   provisioner "remote-exec" {
     inline = [
       <<-EOT
       set -ex
+
+      # This ugly hack is here, because terraform serializes the
+      # embedded yaml files with "- |2", when there is more than
+      # one yamldocument in the embedded file. Kustomize does not understand
+      # that syntax and tries to parse the blocks content as a file, resulting
+      # in weird errors. so gnu sed with funny escaping is used to
+      # replace lines like "- |3" by "- |" (yaml block syntax).
+      # due to indendation this should not changes the embedded
+      # manifests themselves
+      sed -i 's/^- |[0-9]\\+$/- |/g' /var/post_install/kustomization.yaml
+
+
       # Wait for the cluster to be ready before applying addons.
       timeout 180 bash <<'BASH_EOF'
         until [[ "$(kubectl get --raw='/readyz' 2> /dev/null)" == "ok" ]]; do
@@ -208,6 +321,10 @@ resource "null_resource" "kustomization" {
           sleep 2
         done
       BASH_EOF
+
+      echo 'Remove legacy ccm manifests if they exist'
+      kubectl delete serviceaccount,deployment -n kube-system --field-selector 'metadata.name=hcloud-cloud-controller-manager' --selector='app.kubernetes.io/managed-by!=Helm'
+      kubectl delete clusterrolebinding -n kube-system --field-selector 'metadata.name=system:hcloud-cloud-controller-manager' --selector='app.kubernetes.io/managed-by!=Helm'
 
       # Apply the main kustomization file.
       kubectl apply -k /var/post_install
@@ -241,13 +358,15 @@ resource "null_resource" "kustomization_user" {
 
   # Create the directory structure on the remote server.
   provisioner "remote-exec" {
-    inline = ["mkdir -p /var/user_kustomize/$(dirname ${each.key})"]
+    inline = [
+      "mkdir -p $(dirname /var/user_kustomize/${each.key})"
+    ]
   }
 
   # Render the template and upload it, removing the .tpl extension.
   provisioner "file" {
     content     = templatefile("${var.extra_kustomize_folder}/${each.key}", var.extra_kustomize_parameters)
-    destination = "/var/user_kustomize/${trimsuffix(each.key, ".tpl")}"
+    destination = replace("/var/user_kustomize/${each.key}", ".yaml.tpl", ".yaml")
   }
 }
 
@@ -270,26 +389,52 @@ resource "null_resource" "kustomization_user_deploy" {
   }
 
   # Apply the user's kustomization and run any post-deployment commands.
+  # provisioner "remote-exec" {
+  #   inline = [
+  #     <<-EOT
+  #     # Exit immediately if a command exits with a non-zero status.
+  #     set -e
+  #
+  #     # Define the directory for kustomization files.
+  #     KUSTOMIZE_DIR="/var/user_kustomize"
+  #
+  #     # Check if a kustomization file already exists. Kustomize looks for either name.
+  #     if [ ! -f "$KUSTOMIZE_DIR/kustomization.yaml" ] && [ ! -f "$KUSTOMIZE_DIR/Kustomization" ]; then
+  #         echo "User kustomization file not found. Generating a default one."
+  #
+  #         # The command group's output is redirected to create the new kustomization file.
+  #         {
+  #             echo "apiVersion: kustomize.config.k8s.io/v1beta1"
+  #             echo "kind: Kustomization"
+  #             echo "resources:"
+  #             # Find all .yaml and .yml files to add as resources.
+  #             # CRITICAL FIX: We must exclude the kustomization files themselves to avoid a self-reference error.
+  #             find "$KUSTOMIZE_DIR" -maxdepth 1 -type f \( -name "*.yaml" -o -name "*.yml" \) -not \( -name "kustomization.yaml" -o -name "Kustomization" \) -printf "  - %f\n"
+  #         } > "$KUSTOMIZE_DIR/kustomization.yaml"
+  #     fi
+  #
+  #     echo 'Applying user kustomization...'
+  #     # Apply the kustomization. Quoting the variable is a best practice.
+  #     kubectl apply -k "$KUSTOMIZE_DIR"
+  #
+  #     ${var.extra_kustomize_deployment_commands}
+  #     EOT
+  #   ]
+  # }
+
   provisioner "remote-exec" {
-    inline = [
-      <<-EOT
-      set -e
-      KUSTOMIZE_DIR="/var/user_kustomize"
-      if [ ! -f "$KUSTOMIZE_DIR/kustomization.yaml" ] && [ ! -f "$KUSTOMIZE_DIR/Kustomization" ]; then
-        echo "User kustomization file not found. Generating a default one."
-        {
-          echo "apiVersion: kustomize.config.k8s.io/v1beta1"
-          echo "kind: Kustomization"
-          echo "resources:"
-          find "$KUSTOMIZE_DIR" -maxdepth 1 -type f \\( -name "*.yaml" -o -name "*.yml" \\) -printf "  - %f\\n"
-        } > "$KUSTOMIZE_DIR/kustomization.yaml"
-      fi
+    # Debugging: "sh -c 'for file in $(find /var/user_kustomize -type f -name \"*.yaml\" | sort -n); do echo \"\n### Template $${file}.tpl after rendering:\" && cat $${file}; done'",
+    inline = compact([
+      "rm -f /var/user_kustomize/**/*.yaml.tpl",
+      "echo 'Applying user kustomization...'",
+      "kubectl apply -k /var/user_kustomize/ --wait=true",
+      var.extra_kustomize_deployment_commands
+    ])
+  }
 
-      echo 'Applying user kustomization...'
-      kubectl apply -k /var/user_kustomize/
-
-      ${var.extra_kustomize_deployment_commands}
-      EOT
+  lifecycle {
+    replace_triggered_by = [
+      null_resource.kustomization_user
     ]
   }
 }

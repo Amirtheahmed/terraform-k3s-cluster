@@ -2,13 +2,14 @@
 
 locals {
   k3s_token = coalesce(var.k3s_token, random_password.k3s_token[0].result)
+  kured_version  = var.kured_version != null ? var.kured_version : data.github_release.kured[0].release_tag
 
   # Packages needed for MicroOS to run k3s and its addons smoothly.
   needed_packages = join(" ", [
     "restorecond", "policycoreutils", "policycoreutils-python-utils",
     "setools-console", "audit", "bind-utils", "wireguard-tools", "fuse",
     "open-iscsi", "nfs-client", "xfsprogs", "git", "cifs-utils",
-    "bash-completion", "mtr", "tcpdump", "udica", "qemu-guest-agent"
+    "bash-completion", "mtr", "tcpdump", "udica", "qemu-guest-agent", "iptables"
   ])
 
   # Script to perform all OS-level setup and optimizations.
@@ -19,6 +20,8 @@ locals {
     swap_size          = var.swap_size
     ssh_port           = var.ssh_port
     ssh_max_auth_tries = 2
+    # Add network fixes
+    network_fixes      = true
   })
 
   # Base k3s configuration for a single-node cluster.
@@ -29,21 +32,48 @@ locals {
       "disable-cloud-controller"    = true
       "disable-kube-proxy"          = var.cni_plugin == "cilium"
       "disable"                     = ["servicelb", "traefik", "local-storage"]
+      "disable"                     = compact(["traefik", "local-storage", var.ingress_controller == "none" ? "servicelb" : ""]),
       "write-kubeconfig-mode"       = "0644"
       "node-name"                   = var.node_name
       "node-ip"                     = var.server_ip
       "advertise-address"           = var.server_ip
       "https-listen-port"           = 6443
-      "flannel-iface"               = var.network_interface
       "tls-san"                     = [var.server_ip, var.node_name]
       "kubelet-arg"                 = var.kubelet_args
       "kube-apiserver-arg"          = []
       "kube-controller-manager-arg" = []
+
+      "flannel-iface"               = var.network_interface
+      "flannel-backend-options"     = "MTU=1500"
+      "flannel-backend"             = "vxlan"
+      "flannel-backend-type"        = "vxlan"
+      "flannel-backend-vxlan-mtu"   = "1450"  # Reduced from 1500
+
+      "tls-san"                     = [var.server_ip, var.node_name]
+
+      # Enhanced kubelet args for better DNS and networking
+      "kubelet-arg" = concat(var.kubelet_args, [
+        "cluster-dns=10.43.0.10",
+        "cluster-domain=cluster.local",
+        "resolv-conf=/etc/rancher/k3s/resolv.conf",
+        "max-pods=110"
+      ])
+
+      # API server args for better networking
+      "kube-apiserver-arg" = [
+        "enable-admission-plugins=NodeRestriction,ResourceQuota"
+      ]
     },
     # CNI specific settings
     lookup({
-      "flannel" = { "flannel-backend" = "vxlan" }
-      "cilium"  = { "flannel-backend" = "none", "disable-network-policy" = true }
+      "flannel" = {
+        "flannel-backend" = "vxlan",
+        "flannel-conf" = "/etc/rancher/k3s/flannel-conf.json"
+      }
+      "cilium"  = {
+        "flannel-backend" = "none",
+        "disable-network-policy" = true
+      }
     }, var.cni_plugin, {})
   )
 
@@ -63,13 +93,17 @@ locals {
     kind       = "Kustomization"
     resources = concat(
       [
-        "https://github.com/kubereboot/kured/releases/download/${var.kured_version}/kured-${var.kured_version}-dockerhub.yaml",
+        "https://github.com/kubereboot/kured/releases/download/${local.kured_version}/kured-${local.kured_version}-dockerhub.yaml",
         "https://github.com/rancher/system-upgrade-controller/releases/download/${var.sys_upgrade_controller_version}/system-upgrade-controller.yaml",
         "https://github.com/rancher/system-upgrade-controller/releases/download/${var.sys_upgrade_controller_version}/crd.yaml"
       ],
+      var.ingress_controller == "traefik" ? ["traefik_ingress.yaml"] : [],
       var.cni_plugin == "cilium" ? ["cilium.yaml"] : [],
-      var.enable_cert_manager ? ["https://github.com/cert-manager/cert-manager/releases/download/${var.cert_manager_version}/cert-manager.yaml"] : [],
+      //var.enable_cert_manager ? ["https://github.com/cert-manager/cert-manager/releases/download/${var.cert_manager_version}/cert-manager.yaml"] : [],
+      var.enable_cert_manager ? ["cert_manager.yaml"] : [],
       var.enable_external_dns ? ["external_dns.yaml"] : [],
+      var.cni_plugin == "flannel" ? ["flannel-rbac.yaml"] : [],
+      !var.disable_longhorn ? ["longhorn.yaml"] : [],
     ),
     patches = [
       {
@@ -129,6 +163,37 @@ env:
       name: external-dns-secrets
       key: api_token
 EOT
+
+  # Default values for Traefik Helm chart.
+  traefik_values = var.traefik_values != "" ? var.traefik_values : <<EOT
+deployment:
+  kind: Deployment
+  replicas: 1
+service:
+  enabled: true
+  type: LoadBalancer
+ports:
+  web:
+    port: 80
+    exposedPort: 80
+  websecure:
+    port: 443
+    exposedPort: 443
+    tls:
+      enabled: true
+additionalArguments:
+  - "--providers.kubernetesingress.ingressendpoint.publishedservice=${var.ingress_target_namespace}/traefik"
+EOT
+
+  # Default values for Longhorn Helm chart.
+  longhorn_values = var.longhorn_values != "" ? var.longhorn_values : <<EOT
+defaultSettings:
+  defaultDataPath: /var/longhorn
+persistence:
+  defaultFsType: ${var.longhorn_fstype}
+  defaultClassReplicaCount: ${var.longhorn_replica_count}
+EOT
+
 
   # SELinux policy for k3s and containers on MicroOS.
   selinux_policy = <<-EOT
@@ -212,5 +277,5 @@ EOT
   EOT
 
   # Find all user-provided manifest templates.
-  user_kustomization_templates = fileset(var.extra_kustomize_folder, "**/*.yaml.tpl")
+  user_kustomization_templates = try(fileset(var.extra_kustomize_folder, "**/*.yaml.tpl"), toset([]))
 }
