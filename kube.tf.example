@@ -1,84 +1,273 @@
-# kube.tf.example
+# kube.tf.example - Complete example of using the terraform-k3s-bare-metal module
 
-# --- Provider Configuration ---
-# This module is provider-agnostic and uses the null provider for remote execution.
-# Ensure your Terraform environment is set up.
+# ===========================
+# Basic Single Node Setup
+# ===========================
+module "k3s_basic" {
+  source = "github.com/Amirtheahmed/terraform-k3s-bare-metal?ref=v1.0.0"
+  # For local development, use: source = "./"
 
-# --- Module Usage ---
-module "k3s_bare_metal" {
-  # Replace with the path to the directory containing the module files.
-  source = "./"
+  # REQUIRED: Server Configuration
+  server_ip       = "203.0.113.10"              # Your server's public IP
+  ssh_private_key = file("~/.ssh/id_ed25519")   # Path to your SSH private key
 
-  # --- Server & SSH Configuration ---
-  server_ip       = "203.0.113.10" # <-- IMPORTANT: Set your server's public IP here.
-  ssh_user        = "root"
-  ssh_private_key = file("~/.ssh/id_ed25519") # <-- IMPORTANT: Set the path to your private key.
-  node_name       = "netcup-rs4000"
-
-  # --- k3s Configuration ---
-  # To use a specific version, uncomment the line below.
-  # install_k3s_version = "v1.29.4+k3s1"
-
-  # --- CNI Configuration ---
-  # cni_plugin = "cilium" # Uncomment to use Cilium instead of the default Flannel.
-
-  # --- Addon Configuration ---
-  enable_cert_manager = true
-  enable_external_dns = true
-  external_dns_provider      = "cloudflare"
-  external_dns_domain_filter = "your-domain.com" # <-- IMPORTANT: Set your domain.
-
-  # --- Extra Manifests & Commands (Optional) ---
-  # extra_kustomize_folder = "my-manifests" # Default is "extra-manifests"
-  # extra_kustomize_parameters = {
-  #   app_namespace = "production"
-  #   app_version   = "1.2.3"
-  # }
-  # extra_kustomize_deployment_commands = <<-EOT
-  #   echo "Waiting for ArgoCD CRDs to be established..."
-  #   kubectl wait --for condition=established --timeout=120s crd/applications.argoproj.io
-  #   echo "ArgoCD is ready!"
-  # EOT
-
-  # --- Private Registry (Optional) ---
-  /*
-  k3s_registries = <<-EOT
-    mirrors:
-      "docker.io":
-        endpoint:
-          - "http://your-registry-mirror:5000"
-  EOT
-  */
+  # Optional: Give your node a meaningful name
+  node_name = "k3s-prod-01"
 }
 
-# --- Secret for ExternalDNS ---
-# This secret must be created manually in the cluster after setup,
-# or you can use the Kubernetes Terraform provider.
-#
-# Example for Cloudflare:
-#
-# resource "kubernetes_secret" "external_dns" {
-#   metadata {
-#     name      = "external-dns-secrets"
-#     namespace = "external-dns"
-#   }
-#   data = {
-#     api_token = "YOUR_CLOUDFLARE_API_TOKEN"
-#   }
-#   depends_on = [
-#     module.k3s_bare_metal
-#   ]
-# }
+# ===========================
+# Production Setup with All Features
+# ===========================
+module "k3s_production" {
+  source = "github.com/Amirtheahmed/terraform-k3s-bare-metal?ref=v1.0.0"
 
-# --- Outputs ---
+  # --- Server & SSH Configuration ---
+  server_ip       = "203.0.113.10"
+  ssh_user        = "root"
+  ssh_port        = 22
+  ssh_private_key = file("~/.ssh/id_ed25519")
+  node_name       = "prod-k3s-master"
+
+  # --- Network Configuration ---
+  network_interface = "ens3"  # Adjust based on your server's interface
+  cni_plugin        = "cilium" # Use Cilium for advanced networking features
+
+  # --- K3s Version Configuration ---
+  # Option 1: Pin to specific version (recommended for production)
+  install_k3s_version = "v1.29.4+k3s1"
+
+  # Option 2: Use channel (for automatic updates)
+  # initial_k3s_channel = "stable"
+
+  # --- Storage Configuration ---
+  disable_longhorn       = false
+  longhorn_replica_count = 3
+  longhorn_fstype        = "xfs"
+  longhorn_values        = file("configs/longhorn-values.yaml")
+
+  # --- Ingress Configuration ---
+  ingress_controller = "traefik"
+  traefik_version    = "26.0.0"
+  traefik_values     = templatefile("configs/traefik-values.yaml", {
+    domain = "example.com"
+  })
+
+  # --- Certificate Management ---
+  enable_cert_manager  = true
+  cert_manager_version = "v1.14.0"
+  cert_manager_values  = file("configs/cert-manager-values.yaml")
+
+  # --- External DNS Configuration ---
+  enable_external_dns        = true
+  external_dns_provider      = "cloudflare"
+  external_dns_domain_filter = "example.com"
+  external_dns_env_secret_name = "CF_API_TOKEN"
+  external_dns_values = yamlencode({
+    sources = ["ingress", "service"]
+    policy  = "sync"
+    txtOwnerId = "k3s-prod"
+  })
+
+  # --- System Optimization ---
+  swap_size = "4G"  # Add swap for workload spikes
+  kubelet_args = [
+    "max-pods=250",
+    "kube-reserved=cpu=200m,memory=1Gi",
+    "system-reserved=cpu=200m,memory=1Gi",
+    "eviction-hard=memory.available<500Mi,nodefs.available<10%"
+  ]
+
+  # --- Security Configuration ---
+  disable_selinux = false  # Keep SELinux enabled for security
+
+  # --- Private Registry Configuration ---
+  k3s_registries = templatefile("configs/registries.yaml", {
+    registry_url = "registry.example.com"
+  })
+
+  # --- Kured Configuration ---
+  kured_options = {
+    reboot-days     = "mo,tu,we,th,fr"
+    start-time      = "02:00"
+    end-time        = "05:00"
+    time-zone       = "UTC"
+    reboot-sentinel = "/var/run/reboot-required"
+  }
+
+  # --- Custom Manifests ---
+  extra_kustomize_folder = "k8s-manifests"
+  extra_kustomize_parameters = {
+    environment         = "production"
+    monitoring_enabled  = true
+    backup_enabled      = true
+    slack_webhook       = var.slack_webhook_url
+  }
+  extra_kustomize_deployment_commands = <<-EOT
+    echo "Waiting for cert-manager webhooks..."
+    kubectl wait --for=condition=Available --timeout=300s deployment/cert-manager-webhook -n cert-manager
+
+    echo "Creating cluster issuers..."
+    kubectl apply -f /var/user_kustomize/cluster-issuers.yaml
+
+    echo "Deployment complete!"
+  EOT
+}
+
+# ===========================
+# Development/Testing Setup
+# ===========================
+module "k3s_dev" {
+  source = "github.com/Amirtheahmed/terraform-k3s-bare-metal?ref=v1.0.0"
+
+  server_ip       = var.dev_server_ip
+  ssh_private_key = file(var.ssh_key_path)
+  node_name       = "dev-k3s-${var.environment}"
+
+  # Use lighter configuration for dev
+  cni_plugin          = "flannel"
+  disable_longhorn    = true  # Use local-path provisioner
+  enable_external_dns = false
+
+  # Smaller resource reservations
+  kubelet_args = [
+    "max-pods=110",
+    "kube-reserved=cpu=50m,memory=300Mi"
+  ]
+}
+
+# ===========================
+# Multi-Environment Example
+# ===========================
+locals {
+  environments = {
+    staging = {
+      server_ip = "10.0.1.10"
+      node_name = "staging-k3s"
+      domain    = "staging.example.com"
+    }
+    production = {
+      server_ip = "10.0.2.10"
+      node_name = "prod-k3s"
+      domain    = "example.com"
+    }
+  }
+}
+
+module "k3s_clusters" {
+  for_each = local.environments
+  source   = "github.com/Amirtheahmed/terraform-k3s-bare-metal?ref=v1.0.0"
+
+  server_ip       = each.value.server_ip
+  ssh_private_key = file("~/.ssh/id_ed25519")
+  node_name       = each.value.node_name
+
+  enable_external_dns        = true
+  external_dns_domain_filter = each.value.domain
+}
+
+# ===========================
+# Outputs
+# ===========================
 output "kubeconfig" {
-  value       = module.k3s_bare_metal.kubeconfig
-  description = "Kubeconfig to access the cluster."
+  value       = module.k3s_production.kubeconfig
+  description = "Kubeconfig for accessing the production cluster"
   sensitive   = true
 }
 
 output "k3s_token" {
-  value       = module.k3s_bare_metal.k3s_token
-  description = "Token for joining other nodes (if ever needed)."
+  value       = module.k3s_production.k3s_token
+  description = "Token for joining additional nodes"
   sensitive   = true
 }
+
+# Save kubeconfig to file
+resource "local_file" "kubeconfig" {
+  content         = module.k3s_production.kubeconfig
+  filename        = "${path.module}/kubeconfig.yaml"
+  file_permission = "0600"
+}
+
+# ===========================
+# External DNS Secret Example
+# ===========================
+# Note: This requires the Kubernetes provider to be configured
+# after the cluster is created
+
+# provider "kubernetes" {
+#   config_path = local_file.kubeconfig.filename
+# }
+#
+# resource "kubernetes_secret" "external_dns" {
+#   depends_on = [module.k3s_production]
+#
+#   metadata {
+#     name      = "external-dns-secrets"
+#     namespace = "external-dns"
+#   }
+#
+#   data = {
+#     api_token = var.cloudflare_api_token
+#   }
+# }
+
+# ===========================
+# Example: Custom Manifests Structure
+# ===========================
+# k8s-manifests/
+# ├── kustomization.yaml.tpl
+# ├── namespaces.yaml
+# ├── monitoring/
+# │   ├── prometheus.yaml.tpl
+# │   └── grafana.yaml.tpl
+# ├── ingress/
+# │   └── ingress-routes.yaml.tpl
+# └── cluster-issuers.yaml.tpl
+
+# ===========================
+# Example: Registries Configuration
+# ===========================
+# configs/registries.yaml content:
+# mirrors:
+#   docker.io:
+#     endpoint:
+#       - "https://registry-1.docker.io"
+#   ${registry_url}:
+#     endpoint:
+#       - "https://${registry_url}"
+# configs:
+#   "${registry_url}":
+#     auth:
+#       username: "user"
+#       password: "pass"
+
+# ===========================
+# Variables (place in variables.tf)
+# ===========================
+# variable "dev_server_ip" {
+#   description = "IP address of the development server"
+#   type        = string
+# }
+#
+# variable "ssh_key_path" {
+#   description = "Path to SSH private key"
+#   type        = string
+#   default     = "~/.ssh/id_ed25519"
+# }
+#
+# variable "environment" {
+#   description = "Environment name"
+#   type        = string
+#   default     = "dev"
+# }
+#
+# variable "cloudflare_api_token" {
+#   description = "Cloudflare API token for External DNS"
+#   type        = string
+#   sensitive   = true
+# }
+#
+# variable "slack_webhook_url" {
+#   description = "Slack webhook for notifications"
+#   type        = string
+#   sensitive   = true
+# }

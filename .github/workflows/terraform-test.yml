@@ -1,0 +1,32 @@
+name: Terraform Tests
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main, develop]
+
+jobs:
+  test-examples:
+    name: Test Examples
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        example:
+          - basic
+          - production
+          - development
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Test ${{ matrix.example }} example
+        working-directory: examples/${{ matrix.example }}
+        run: |
+          terraform init -backend=false
+          terraform validate
+          terraform plan -var="server_ip=10.0.0.1" -var="ssh_private_key=dummy" -out=plan.tfplan

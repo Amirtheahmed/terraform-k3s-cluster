@@ -1,119 +1,263 @@
-# Terraform k3s on Bare Metal
+# Terraform K3s Bare Metal Module
 
-A lightweight, provider-agnostic Terraform module to deploy a single-node k3s cluster on any bare-metal server or VM running **openSUSE MicroOS**.
+[![Terraform Version](https://img.shields.io/badge/terraform-%3E%3D1.5.0-blue)](https://www.terraform.io/)
+[![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-This project is a stripped-down version of the excellent [kube-hetzner](https://github.com/kube-hetzner/terraform-hcloud-kube-hetzner) module, adapted to be cloud-independent. It retains the core principles of an optimized, auto-upgrading, and secure k3s setup.
+A production-ready, provider-agnostic Terraform module to deploy single-node or multi-node k3s clusters on bare-metal servers running **openSUSE MicroOS**.
 
-## Features
+This module is inspired by the excellent [kube-hetzner](https://github.com/kube-hetzner/terraform-hcloud-kube-hetzner) project, adapted for cloud-independent deployments with enterprise-grade security and automation features.
 
-- **Provider Agnostic**: Deploy on any bare-metal server, root server (like Netcup, Hetzner Robot), or VM.
-- **MicroOS Base**: Leverages the security and transactional-update features of openSUSE MicroOS.
-- **k3s Powered**: Uses the lightweight, certified Kubernetes distribution from Rancher.
-- **Automated Setup**: Installs k3s and essential addons with a single `terraform apply`.
-- **Essential Addons**: Comes with pre-configured setups for:
-  - **Kured**: For safe, automated node reboots after OS updates.
-  - **System Upgrade Controller**: For automated k3s version upgrades.
-  - **Cert-Manager**: For automated TLS certificate management.
-  - **ExternalDNS** (Optional): For automated DNS record management.
-- **Choice of CNI**: Supports both lightweight `Flannel` (default) and feature-rich `Cilium`.
-- **Extensible**: Easily add your own manifests and Helm charts using Kustomize.
+## 🚀 Features
 
-## Prerequisites
+- **🔧 Provider Agnostic**: Deploy on any bare-metal server, VPS, or VM with SSH access
+- **🔒 Security-First**: Leverages openSUSE MicroOS's transactional updates and immutable filesystem
+- **☸️ K3s Optimized**: Lightweight Kubernetes with production-ready defaults
+- **🔄 Auto-Updates**: Automated OS and k3s updates via Kured and System Upgrade Controller
+- **📦 Essential Addons**: Pre-configured with critical cluster components
+- **🌐 CNI Flexibility**: Choose between Flannel (simple) or Cilium (advanced)
+- **🎨 Extensible**: Easy integration of custom manifests via Kustomize
 
-1.  **A Server**: You need a server with **openSUSE MicroOS** already installed. This module **does not** install the operating system.
-2.  **SSH Access**: You must have root SSH access to the server using a private key.
-3.  **Terraform**: [Terraform](https://learn.hashicorp.com/tutorials/terraform/install-cli) (or [OpenTofu](https://opentofu.org/docs/intro/install/)) must be installed on your local machine.
+## 📋 Prerequisites
 
-## Getting Started
+- **Server**: A server with **openSUSE MicroOS** pre-installed
+- **SSH Access**: Root SSH access via private key
+- **Terraform**: Version >= 1.5.0 or [OpenTofu](https://opentofu.org/)
+- **Network**: Server must have internet access for package installation
 
-1.  **Clone or Download this Module**: Place the module files in a directory on your local machine.
+## 🏁 Quick Start
 
-2.  **Create a `kube.tf` file**: In the same directory (or a parent directory), create a file to call the module. See `kube.tf.example` for a starting point.
+### Using as a Terraform Module
 
-    ```terraform
-    module "k3s_bare_metal" {
-      source = "./path/to/module" # Or just "./" if in the same directory
+```hcl
+module "k3s_cluster" {
+  source  = "github.com/Amirtheahmed/terraform-k3s-bare-metal?ref=v1.0.0"
+  
+  # Required variables
+  server_ip       = "203.0.113.10"
+  ssh_private_key = file("~/.ssh/id_ed25519")
+  
+  # Optional: Enable external DNS
+  enable_external_dns        = true
+  external_dns_provider      = "cloudflare"
+  external_dns_domain_filter = "example.com"
+}
 
-      # --- Server & SSH Configuration ---
-      server_ip       = "203.0.113.10" # <-- Set your server's public IP
-      ssh_private_key = file("~/.ssh/id_ed25519") # <-- Set path to your private key
+# Output the kubeconfig
+output "kubeconfig" {
+  value     = module.k3s_cluster.kubeconfig
+  sensitive = true
+}
+```
 
-      # --- (Optional) Addon Configuration ---
-      enable_external_dns        = true
-      external_dns_provider      = "cloudflare"
-      external_dns_domain_filter = "your-domain.com" # <-- Set your domain
-    }
+### Deploy the Cluster
 
-    output "kubeconfig" {
-      value     = module.k3s_bare_metal.kubeconfig
-      sensitive = true
-    }
-    ```
+```bash
+terraform init
+terraform plan
+terraform apply
+```
 
-3.  **Deploy the Cluster**:
-    ```sh
-    terraform init
-    terraform apply
-    ```
-    The process will take several minutes. It involves installing packages, rebooting the server once, and then setting up k3s and all the addons.
+### Access Your Cluster
 
-4.  **Access Your Cluster**: Once the apply is complete, the `kubeconfig` will be printed as an output.
-    ```sh
-    terraform output -raw kubeconfig > kubeconfig.yaml
-    export KUBECONFIG=$(pwd)/kubeconfig.yaml
-    kubectl get nodes
-    ```
+```bash
+# Save kubeconfig
+terraform output -raw kubeconfig > ~/.kube/k3s-config
+export KUBECONFIG=~/.kube/k3s-config
 
-## Adding Extras (Custom Manifests)
+# Verify cluster
+kubectl get nodes
+kubectl get pods -A
+```
 
-You can easily deploy your own applications, Helm charts, and other Kubernetes manifests by creating a folder (default: `extra-manifests`) next to your `kube.tf` file.
+## 📦 Included Components
 
-1.  **Create the folder**:
-    ```sh
-    mkdir extra-manifests
-    ```
+| Component | Purpose | Default |
+|-----------|---------|---------|
+| **Kured** | Automated node reboots after OS updates | ✅ Enabled |
+| **System Upgrade Controller** | Automated k3s version upgrades | ✅ Enabled |
+| **Cert-Manager** | TLS certificate automation | ✅ Enabled |
+| **External-DNS** | Automated DNS record management | ❌ Optional |
+| **Longhorn** | Distributed block storage | ✅ Enabled |
+| **Traefik** | Ingress controller | ✅ Enabled |
 
-2.  **Add your manifests**: Place any number of `.yaml` or `.yaml.tpl` files in this folder. The module will automatically upload and apply them. Files ending in `.tpl` will be rendered as Terraform templates.
+## 🛠️ Configuration Options
 
-3.  **Create a `kustomization.yaml.tpl`**: This file is required at the root of your `extra-manifests` folder to tie everything together.
+### Basic Configuration
 
-    **Example `extra-manifests/kustomization.yaml.tpl`**:
-    ```yaml
-    apiVersion: kustomize.config.k8s.io/v1beta1
-    kind: Kustomization
-    resources:
-      - argocd.yaml
-      - my-app-namespace.yaml
-    ```
+```hcl
+module "k3s_cluster" {
+  source = "github.com/Amirtheahmed/terraform-k3s-bare-metal?ref=v1.0.0"
+  
+  # Server Configuration
+  server_ip       = "203.0.113.10"
+  ssh_user        = "root"
+  ssh_port        = 22
+  ssh_private_key = file("~/.ssh/id_ed25519")
+  node_name       = "k3s-master-01"
+  
+  # K3s Configuration
+  install_k3s_version = "v1.29.4+k3s1"  # Pin specific version
+  initial_k3s_channel = "stable"        # Or use channel
+  
+  # Network Configuration
+  cni_plugin        = "cilium"          # or "flannel" (default)
+  network_interface = "eth0"
+}
+```
 
-4.  **(Optional) Pass Parameters**: You can pass variables to your templates using the `extra_kustomize_parameters` variable in your `kube.tf`.
+### Advanced Features
 
-    **Example `extra-manifests/my-app.yaml.tpl`**:
-    ```yaml
-    apiVersion: v1
-    kind: Namespace
-    metadata:
-      name: ${app_namespace}
-    ```
-    **In `kube.tf`**:
-    ```terraform
-    module "k3s_bare_metal" {
-      # ...
-      extra_kustomize_parameters = {
-        app_namespace = "production"
-      }
-    }
-    ```
+```hcl
+module "k3s_cluster" {
+  source = "github.com/Amirtheahmed/terraform-k3s-bare-metal?ref=v1.0.0"
+  
+  # ... basic config ...
+  
+  # Storage Configuration
+  disable_longhorn      = false
+  longhorn_replica_count = 3
+  longhorn_fstype       = "xfs"
+  
+  # Ingress Configuration
+  ingress_controller = "traefik"
+  traefik_values     = file("traefik-values.yaml")
+  
+  # Security
+  disable_selinux = false  # Keep SELinux enabled
+  
+  # Performance
+  swap_size = "2G"
+  kubelet_args = [
+    "max-pods=250",
+    "kube-reserved=cpu=200m,memory=1Gi"
+  ]
+}
+```
 
-5.  **(Optional) Run Post-Deploy Commands**: For complex applications like ArgoCD that require waiting for CRDs, use the `extra_kustomize_deployment_commands` variable.
+## 🎯 Custom Manifests
 
-    **In `kube.tf`**:
-    ```terraform
-    module "k3s_bare_metal" {
-      # ...
-      extra_kustomize_deployment_commands = "kubectl wait --for condition=established --timeout=120s crd/applications.argoproj.io"
-    }
-    ```
+Deploy your own applications alongside the cluster:
 
-## Module Variables
-*(See `variables.tf` for a full list)*
+1. Create a directory for your manifests:
+   ```bash
+   mkdir extra-manifests
+   ```
+
+2. Add your Kubernetes manifests:
+   ```yaml
+   # extra-manifests/namespace.yaml
+   apiVersion: v1
+   kind: Namespace
+   metadata:
+     name: my-app
+   ```
+
+3. Create a kustomization file:
+   ```yaml
+   # extra-manifests/kustomization.yaml
+   apiVersion: kustomize.config.k8s.io/v1beta1
+   kind: Kustomization
+   resources:
+     - namespace.yaml
+   ```
+
+4. Reference in your Terraform:
+   ```hcl
+   module "k3s_cluster" {
+     source = "github.com/Amirtheahmed/terraform-k3s-bare-metal?ref=v1.0.0"
+     
+     # ... other config ...
+     
+     extra_kustomize_folder = "extra-manifests"
+     extra_kustomize_parameters = {
+       app_version = "1.2.3"
+     }
+   }
+   ```
+
+## 🔐 Security Considerations
+
+- **SELinux**: Custom policies are applied by default for k3s compatibility
+- **SSH**: Hardened configuration with key-only authentication
+- **Firewall**: Ensure required ports are open:
+  - 6443: Kubernetes API
+  - 10250: Kubelet metrics
+  - 80/443: HTTP/HTTPS (if using ingress)
+
+## 🔄 Maintenance
+
+### Automated Updates
+
+The cluster automatically handles:
+- **OS Updates**: Via MicroOS transactional-update + Kured
+- **K3s Updates**: Via System Upgrade Controller
+
+### Manual Interventions
+
+```bash
+# Check update status
+kubectl get nodes
+kubectl get plans -n system-upgrade
+
+# Trigger immediate OS update
+kubectl label node <node-name> kured-reboot-required=true
+
+# Update k3s channel
+kubectl edit plan k3s-server -n system-upgrade
+```
+
+## 📊 Module Inputs
+
+| Name | Description | Type | Default | Required |
+|------|-------------|------|---------|----------|
+| `server_ip` | Public IP of the server | `string` | - | ✅ |
+| `ssh_private_key` | SSH private key content | `string` | - | ✅ |
+| `ssh_user` | SSH username | `string` | `"root"` | ❌ |
+| `node_name` | Kubernetes node name | `string` | `"bare-metal-k3s"` | ❌ |
+| `cni_plugin` | CNI plugin choice | `string` | `"flannel"` | ❌ |
+| `enable_cert_manager` | Install cert-manager | `bool` | `true` | ❌ |
+| `enable_external_dns` | Install external-dns | `bool` | `false` | ❌ |
+
+[View all inputs](variables.tf)
+
+## 📤 Module Outputs
+
+| Name | Description | Sensitive |
+|------|-------------|-----------|
+| `kubeconfig` | Kubeconfig for cluster access | ✅ |
+| `k3s_token` | Token for joining additional nodes | ✅ |
+
+## 🚀 Examples
+
+### Minimal Setup
+
+```hcl
+module "k3s_minimal" {
+  source = "github.com/Amirtheahmed/terraform-k3s-bare-metal?ref=v1.0.0"
+  
+  server_ip       = "10.0.0.10"
+  ssh_private_key = file("~/.ssh/id_rsa")
+}
+```
+
+### Production Setup
+
+See [examples/production](examples/production) for a complete production configuration including:
+- High availability setup
+- Monitoring stack
+- Backup configuration
+- Security hardening
+
+## 🤝 Contributing
+
+Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+
+## 📄 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## 🙏 Acknowledgments
+
+- [kube-hetzner](https://github.com/kube-hetzner/terraform-hcloud-kube-hetzner) - Inspiration and base concepts
+- [k3s](https://k3s.io/) - Lightweight Kubernetes
+- [openSUSE MicroOS](https://microos.opensuse.org/) - Immutable OS platform
