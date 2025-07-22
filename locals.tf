@@ -25,56 +25,46 @@ locals {
   })
 
   # Base k3s configuration for a single-node cluster.
-  k3s_config = merge(
+   k3s_config = merge(
     {
       "token"                       = local.k3s_token
       "cluster-init"                = true
       "disable-cloud-controller"    = true
-      "disable-kube-proxy"          = var.cni_plugin == "cilium"
-      "disable"                     = ["servicelb", "traefik", "local-storage"]
-      "disable"                     = compact(["traefik", "local-storage", var.ingress_controller == "none" ? "servicelb" : ""]),
       "write-kubeconfig-mode"       = "0644"
       "node-name"                   = var.node_name
       "node-ip"                     = var.server_ip
       "advertise-address"           = var.server_ip
       "https-listen-port"           = 6443
       "tls-san"                     = [var.server_ip, var.node_name]
-      "kubelet-arg"                 = var.kubelet_args
-      "kube-apiserver-arg"          = []
+      "flannel-iface"               = var.network_interface
+      "kube-apiserver-arg"          = ["enable-admission-plugins=NodeRestriction,ResourceQuota"]
       "kube-controller-manager-arg" = []
 
-      "flannel-iface"               = var.network_interface
-      "flannel-backend-options"     = "MTU=1500"
-      "flannel-backend"             = "vxlan"
-      "flannel-backend-type"        = "vxlan"
-      "flannel-backend-vxlan-mtu"   = "1450"  # Reduced from 1500
-
-      "tls-san"                     = [var.server_ip, var.node_name]
-
-      # Enhanced kubelet args for better DNS and networking
+      # Combine kubelet arguments correctly
       "kubelet-arg" = concat(var.kubelet_args, [
         "cluster-dns=10.43.0.10",
         "cluster-domain=cluster.local",
-        "resolv-conf=/etc/rancher/k3s/resolv.conf",
-        "max-pods=110"
+        "resolv-conf=/etc/rancher/k3s/resolv.conf"
       ])
 
-      # API server args for better networking
-      "kube-apiserver-arg" = [
-        "enable-admission-plugins=NodeRestriction,ResourceQuota"
-      ]
+      # Correctly disable built-in components
+      "disable" = compact(
+        distinct(
+          concat(
+            ["servicelb", "traefik", "local-storage"],
+            var.ingress_controller != "traefik" ? ["traefik"] : [],
+            var.cni_plugin == "cilium" ? ["kube-proxy"] : []
+          )
+        )
+      )
     },
     # CNI specific settings
-    lookup({
-      "flannel" = {
-        "flannel-backend" = "vxlan",
-        "flannel-conf" = "/etc/rancher/k3s/flannel-conf.json"
-      }
-      "cilium"  = {
-        "flannel-backend" = "none",
-        "disable-network-policy" = true
-      }
-    }, var.cni_plugin, {})
+    var.cni_plugin == "cilium" ? {
+      "flannel-backend"        = "none"
+      "disable-network-policy" = true
+    } : {
+      "flannel-backend" = "vxlan"
+    }
   )
 
   # Commands to install k3s server.

@@ -4,7 +4,8 @@
 # Basic Single Node Setup
 # ===========================
 module "k3s_basic" {
-  source = "github.com/Amirtheahmed/terraform-k3s-bare-metal?ref=v1.0.0"
+  source  = "Amirtheahmed/cluster/k3s"
+  version = "0.1.0" # Use the latest version from the registry
   # For local development, use: source = "./"
 
   # REQUIRED: Server Configuration
